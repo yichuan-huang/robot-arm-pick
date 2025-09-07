@@ -1,19 +1,38 @@
 # Reference: https://github.com/DLR-RM/rl-baselines3-zoo/blob/master/hyperparams/ppo.yml#L32
 seed: 42
 
-n_timesteps: !!float 1e6
+# Training timesteps
+n_timesteps: !!float 2e6
 policy: 'MlpPolicy'
-n_steps: 16
-batch_size: 4096
+
+# Rollout settings
+n_steps: 2048
+batch_size: 64
 gae_lambda: 0.95
 gamma: 0.99
-n_epochs: 20
-ent_coef: 0.01
+
+# Training optimization
+n_epochs: 10
+ent_coef: 0.0
 learning_rate: !!float 3e-4
 clip_range: !!float 0.2
+
+# Neural network architecture
 policy_kwargs:
-  net_arch: [32, 32]
+  net_arch: [256, 256, 128]
   squash_output: false
-vf_coef: 1.0
-max_grad_norm: 1.0
+  activation_fn: "torch.nn.ReLU"  # Explicit activation function
+
+# Value function coefficient
+vf_coef: 0.5
+
+# Gradient clipping
+max_grad_norm: 0.5
+
+# Device
 device: "cuda:0"
+
+# Additional advanced settings for manipulation tasks
+# normalize_input: true  # Uncomment if input normalization is needed
+# normalize_value: false
+# clip_obs: 10.0
