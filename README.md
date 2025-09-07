@@ -104,24 +104,33 @@ robot_arm_pick/
 Train a PPO agent using Stable-Baselines3:
 
 ```bash
-# Basic training
-python scripts/sb3/train.py --task Isaac-Franka-Picking-v0 --headless
+# Basic training (recommended)
+python scripts/sb3/train.py --task Isaac-Franka-Picking-v0 --num_envs 64 --headless
 
 # Advanced training with custom parameters
 python scripts/sb3/train.py \
     --task Isaac-Franka-Picking-v0 \
-    --num_envs 64 \
-    --max_iterations 1000 \
+    --num_envs 128 \
+    --max_iterations 2000 \
     --seed 42 \
+    --headless
+
+# Training with video recording
+python scripts/sb3/train.py \
+    --task Isaac-Franka-Picking-v0 \
+    --num_envs 64 \
+    --video \
+    --video_interval 50000 \
     --headless
 ```
 
 **Training Options:**
 - `--task`: Environment identifier
-- `--num_envs`: Parallel environments (default: 64)
-- `--max_iterations`: Training iterations (default: 1000)
+- `--num_envs`: Parallel environments (default: 64, recommended: 64-128)
+- `--max_iterations`: Training iterations (default: 1000, recommended: 2000+ for complex tasks)
 - `--checkpoint`: Resume from checkpoint
 - `--video`: Record training videos
+- `--video_interval`: Steps between video recordings (default: 2000)
 - `--headless`: Run without GUI
 
 ### 🎮 Testing & Evaluation
@@ -132,14 +141,22 @@ Test a trained model:
 # Test trained model
 python scripts/sb3/play.py \
     --task Isaac-Franka-Picking-v0 \
-    --checkpoint /path/to/model.zip \
-    --num_envs 4
+    --checkpoint logs/sb3/Isaac-Franka-Picking-v0/YYYY-MM-DD_HH-MM-SS/model.zip \
+    --num_envs 16
+
+# Test with video recording
+python scripts/sb3/play.py \
+    --task Isaac-Franka-Picking-v0 \
+    --checkpoint logs/sb3/Isaac-Franka-Picking-v0/YYYY-MM-DD_HH-MM-SS/model.zip \
+    --num_envs 4 \
+    --video
 ```
 
 **Testing Options:**
 - `--checkpoint`: Path to trained model [**Required**]
-- `--num_envs`: Number of test environments
+- `--num_envs`: Number of test environments (recommended: 4-16)
 - `--video`: Record evaluation videos
+- `--video_length`: Length of recorded videos (default: 200 steps)
 
 ### 🎲 Demo Scripts
 
