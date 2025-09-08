@@ -73,3 +73,37 @@ def robot_gripper_joint_vel(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Joint velocities of the robot gripper (last 2 joints)."""
     asset: Articulation = env.scene["robot"]
     return asset.data.joint_vel[:, 7:9]
+
+
+def task_progress(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Task progress as a fraction of episode completion (0 to 1)."""
+    progress = env.episode_length_buf.float() / env.max_episode_length
+    return progress.unsqueeze(1)  # Add dimension for consistency
+
+
+def relative_ee_to_target(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Relative position from end-effector to target object."""
+    ee_pos = env.scene["robot"].data.body_pos_w[:, -1, :3]
+    obj_pos = env.scene["object"].data.root_pos_w[:, :3]
+    return obj_pos - ee_pos
+
+
+def ee_to_target_distance(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Distance from end-effector to target object."""
+    ee_pos = env.scene["robot"].data.body_pos_w[:, -1, :3]
+    obj_pos = env.scene["object"].data.root_pos_w[:, :3]
+    distance = torch.norm(ee_pos - obj_pos, dim=1)
+    return distance.unsqueeze(1)
+
+
+def ee_linear_velocity(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """End-effector linear velocity."""
+    asset: Articulation = env.scene["robot"]
+    return asset.data.body_lin_vel_w[:, -1, :3]
+
+
+def relative_ref_to_ee(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Relative position from reference trajectory to end-effector."""
+    ref_pos = env.get_reference_position()
+    ee_pos = env.scene["robot"].data.body_pos_w[:, -1, :3]
+    return ref_pos - ee_pos
