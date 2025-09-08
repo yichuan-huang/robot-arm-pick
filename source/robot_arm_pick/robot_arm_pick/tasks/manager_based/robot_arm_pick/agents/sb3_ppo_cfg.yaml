@@ -21,7 +21,6 @@ clip_range: !!float 0.2
 policy_kwargs:
   net_arch: [256, 256, 128]
   squash_output: false
-  activation_fn: "torch.nn.ReLU"  # Explicit activation function
 
 # Value function coefficient
 vf_coef: 0.5
