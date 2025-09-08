@@ -4,9 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 
-"""Script to train RL agent with Stable Baselines3."""
-
-"""Launch Isaac Sim Simulator first."""
+"""
+Script to train RL agent with Stable Baselines3.
+"""
 
 import argparse
 import contextlib
@@ -16,7 +16,6 @@ from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
-# add argparse arguments
 parser = argparse.ArgumentParser(
     description="Train an RL agent with Stable-Baselines3."
 )
@@ -49,7 +48,7 @@ parser.add_argument(
     "--seed", type=int, default=None, help="Seed used for the environment"
 )
 parser.add_argument(
-    "--log_interval", type=int, default=100_000, help="Log data every n timesteps."
+    "--log_interval", type=int, default=50_000, help="Log data every n timesteps."
 )
 parser.add_argument(
     "--checkpoint",
@@ -72,27 +71,19 @@ parser.add_argument(
     default=False,
     help="Use a slower SB3 wrapper but keep all the extra training info.",
 )
-# append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
-# parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
-# always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
 
-# clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
 
-# launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 
 def cleanup_pbar(*args):
-    """
-    A small helper to stop training and
-    cleanup progress bar properly on ctrl+c
-    """
+    """A small helper to stop training and cleanup progress bar properly on ctrl+c"""
     import gc
 
     tqdm_objects = [obj for obj in gc.get_objects() if "tqdm" in type(obj).__name__]
@@ -102,15 +93,13 @@ def cleanup_pbar(*args):
     raise KeyboardInterrupt
 
 
-# disable KeyboardInterrupt override
 signal.signal(signal.SIGINT, cleanup_pbar)
-
-"""Rest everything follows."""
 
 import gymnasium as gym
 import numpy as np
 import os
 import random
+import torch
 from datetime import datetime
 
 import omni
@@ -135,62 +124,48 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import robot_arm_pick.tasks  # noqa: F401
 
-import robot_arm_pick.tasks  # noqa: F401
-
 
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(
     env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict
 ):
     """Train with stable-baselines agent."""
-    # randomly sample a seed if seed = -1
     if args_cli.seed == -1:
         args_cli.seed = random.randint(0, 10000)
 
-    # override configurations with non-hydra CLI arguments
     env_cfg.scene.num_envs = (
         args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     )
     agent_cfg["seed"] = (
         args_cli.seed if args_cli.seed is not None else agent_cfg["seed"]
     )
-    # max iterations for training
     if args_cli.max_iterations is not None:
         agent_cfg["n_timesteps"] = (
             args_cli.max_iterations * agent_cfg["n_steps"] * env_cfg.scene.num_envs
         )
 
-    # set the environment seed
-    # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg["seed"]
     env_cfg.sim.device = (
         args_cli.device if args_cli.device is not None else env_cfg.sim.device
     )
 
-    # directory for logging into
     run_info = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_root_path = os.path.abspath(os.path.join("logs", "sb3", args_cli.task))
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
-    # The Ray Tune workflow extracts experiment name using the logging line below, hence, do not change it (see PR #2346, comment-2819298849)
     print(f"Exact experiment name requested from command line: {run_info}")
     log_dir = os.path.join(log_root_path, run_info)
-    # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
     dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
     dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
 
-    # save command used to run the script
     command = " ".join(sys.orig_argv)
     (Path(log_dir) / "command.txt").write_text(command)
 
-    # post-process agent configuration
     agent_cfg = process_sb3_cfg(agent_cfg, env_cfg.scene.num_envs)
-    # read configurations about the agent-training
     policy_arch = agent_cfg.pop("policy")
     n_timesteps = agent_cfg.pop("n_timesteps")
 
-    # set the IO descriptors output directory if requested
     if isinstance(env_cfg, ManagerBasedRLEnvCfg):
         env_cfg.export_io_descriptors = args_cli.export_io_descriptors
         env_cfg.io_descriptors_output_dir = log_dir
@@ -199,16 +174,13 @@ def main(
             "IO descriptors are only supported for manager based RL environments. No IO descriptors will be exported."
         )
 
-    # create isaac environment
     env = gym.make(
         args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None
     )
 
-    # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
 
-    # wrap for video recording
     if args_cli.video:
         video_kwargs = {
             "video_folder": os.path.join(log_dir, "videos", "train"),
@@ -220,7 +192,6 @@ def main(
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
-    # wrap around environment for stable baselines
     env = Sb3VecEnvWrapper(env, fast_variant=not args_cli.keep_all_info)
 
     norm_keys = {"normalize_input", "normalize_value", "clip_obs"}
@@ -241,18 +212,38 @@ def main(
             clip_reward=np.inf,
         )
 
-    # create agent from stable baselines
+    if "Franka-Picking" in args_cli.task:
+        print("[INFO] Using improved hyperparameters for Franka picking task.")
+        agent_cfg.update(
+            {
+                "learning_rate": 5e-4,
+                "n_steps": 4096,
+                "batch_size": 128,
+                "n_epochs": 15,
+                "gamma": 0.995,
+                "gae_lambda": 0.98,
+                "clip_range": 0.25,
+                "ent_coef": 0.01,
+                "vf_coef": 0.5,
+                "max_grad_norm": 0.5,
+            }
+        )
+        if policy_arch == "MlpPolicy":
+            agent_cfg["policy_kwargs"] = {
+                "net_arch": [512, 512, 256],
+                "activation_fn": torch.nn.Tanh,
+            }
+
     agent = PPO(policy_arch, env, verbose=1, tensorboard_log=log_dir, **agent_cfg)
     if args_cli.checkpoint is not None:
         agent = agent.load(args_cli.checkpoint, env, print_system_info=True)
 
-    # callbacks for agent
+    save_freq = 64000 if "Franka-Picking" in args_cli.task else 1000
     checkpoint_callback = CheckpointCallback(
-        save_freq=1000, save_path=log_dir, name_prefix="model", verbose=2
+        save_freq=save_freq, save_path=log_dir, name_prefix="model", verbose=2
     )
     callbacks = [checkpoint_callback, LogEveryNTimesteps(n_steps=args_cli.log_interval)]
 
-    # train the agent
     with contextlib.suppress(KeyboardInterrupt):
         agent.learn(
             total_timesteps=n_timesteps,
@@ -260,7 +251,6 @@ def main(
             progress_bar=True,
             log_interval=None,
         )
-    # save the final model
     agent.save(os.path.join(log_dir, "model"))
     print("Saving to:")
     print(os.path.join(log_dir, "model.zip"))
@@ -269,12 +259,9 @@ def main(
         print("Saving normalization")
         env.save(os.path.join(log_dir, "model_vecnormalize.pkl"))
 
-    # close the simulator
     env.close()
 
 
 if __name__ == "__main__":
-    # run the main function
     main()
-    # close sim app
     simulation_app.close()
