@@ -46,7 +46,7 @@ class TableSceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Table",
         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, 0, 0.5], rot=[1, 0, 0, 0]),
         spawn=sim_utils.CuboidCfg(
-            size=(0.6, 0.5, 0.05),  # 桌子尺寸调小：60cm x 50cm x 5cm
+            size=(0.6, 0.5, 0.05),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
             mass_props=sim_utils.MassPropertiesCfg(mass=100.0),
             collision_props=sim_utils.CollisionPropertiesCfg(),
@@ -62,7 +62,7 @@ class TableSceneCfg(InteractiveSceneCfg):
             activate_contact_sensors=False,
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.05, 0.0, 0.525),  # 机械臂位置：桌子前方，不在桌子上
+            pos=(0.05, 0.0, 0.525),
             joint_pos={
                 "panda_joint1": 0.0,
                 "panda_joint2": -1.0,
@@ -105,7 +105,7 @@ class TableSceneCfg(InteractiveSceneCfg):
     object = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Object",
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=[0.6, 0.0, 0.575], rot=[1, 0, 0, 0]  # 桌面上的位置
+            pos=[0.6, 0.0, 0.575], rot=[1, 0, 0, 0]
         ),
         spawn=sim_utils.UsdFileCfg(
             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
@@ -124,12 +124,10 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
     """Franka constrained picking environment configuration."""
 
     # Scene settings
-    scene: TableSceneCfg = TableSceneCfg(
-        num_envs=64, env_spacing=3.0
-    )  # Small for visualization
+    scene: TableSceneCfg = TableSceneCfg(num_envs=64, env_spacing=3.0)
 
-    # Basic settings
-    episode_length_s = 8.0
+    # Basic settings - adjusted for better learning
+    episode_length_s = 12.0  # Longer episodes for more exploration
     decimation = 2
 
     # Simulation settings
@@ -147,11 +145,12 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
             # gripper state (last 2 joints)
             gripper_pos = ObsTerm(func=custom_mdp.robot_gripper_joint_pos)
 
-            # end-effector position
+            # end-effector position and velocity
             ee_pos = ObsTerm(
                 func=custom_mdp.robot_ee_pos,
                 params={"asset_cfg": SceneEntityCfg("robot")},
             )
+            ee_velocity = ObsTerm(func=custom_mdp.ee_linear_velocity)
 
             # object position
             object_pos = ObsTerm(
@@ -159,9 +158,17 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
                 params={"asset_cfg": SceneEntityCfg("object")},
             )
 
+            # relative positions (more informative for learning)
+            relative_ee_to_target = ObsTerm(func=custom_mdp.relative_ee_to_target)
+            ee_to_target_distance = ObsTerm(func=custom_mdp.ee_to_target_distance)
+
             # reference trajectory info
             ref_pos = ObsTerm(func=custom_mdp.reference_position)
+            relative_ref_to_ee = ObsTerm(func=custom_mdp.relative_ref_to_ee)
             deviation = ObsTerm(func=custom_mdp.trajectory_deviation)
+
+            # task progress and time info
+            task_progress = ObsTerm(func=custom_mdp.task_progress)
             time_remaining = ObsTerm(func=custom_mdp.time_remaining)
 
             def __post_init__(self):
@@ -172,7 +179,7 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
 
     observations: ObservationsCfg = ObservationsCfg()
 
-    # Actions (7 arm joints + 2 gripper joints = 9 DOF)
+    # Actions
     @configclass
     class ActionsCfg:
         joint_efforts = mdp.JointEffortActionCfg(
@@ -181,28 +188,58 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
 
     actions: ActionsCfg = ActionsCfg()
 
-    # Actions (9 joint efforts for Franka)
     action_space = 9
 
-    # Rewards
+    # Updated Rewards - aligned with new reward functions and better balanced weights
     @configclass
     class RewardsCfg:
-        # Time penalty
-        time_penalty = RewTerm(
-            func=custom_mdp.time_penalty_reward,
-            weight=1.0,
-        )
-
-        # Trajectory tracking
+        # Primary trajectory tracking reward - reduced weight for less conservative behavior
         track_trajectory = RewTerm(
-            func=custom_mdp.trajectory_tracking_reward, weight=5.0
+            func=custom_mdp.trajectory_tracking_reward,
+            weight=3.0,  # Reduced from 10.0 to allow more exploration
         )
 
-        # Target approach
-        approach_target = RewTerm(func=custom_mdp.target_approach_reward, weight=2.0)
+        # Target approach reward - increased weight to emphasize goal reaching
+        approach_target = RewTerm(
+            func=custom_mdp.target_approach_reward, weight=8.0
+        )  # Increased from 3.0
 
-        # Success bonus
-        success_bonus = RewTerm(func=custom_mdp.success_bonus_reward, weight=100.0)
+        # Success bonus - highest priority
+        success_bonus = RewTerm(
+            func=custom_mdp.success_bonus_reward,
+            weight=1.0,  # Weight is 1.0, bonus value is large in function
+        )
+
+        # Grasp precision reward - moderate weight
+        grasp_precision = RewTerm(
+            func=custom_mdp.grasp_precision_reward,
+            weight=4.0,  # Reduced from 8.0 to balance with approach reward
+        )
+
+        # Time efficiency reward - moderate weight
+        time_efficiency = RewTerm(
+            func=custom_mdp.time_efficiency_reward,
+            weight=2.0,  # Reduced from 5.0 to prioritize task completion over speed
+        )
+
+        # Trajectory violation penalty - reduced to allow some exploration
+        trajectory_violation = RewTerm(
+            func=custom_mdp.trajectory_violation_penalty,
+            weight=0.5,  # Reduced from 1.0 to be less punitive
+        )
+
+        # Control penalties - reduced for smoother learning
+        joint_velocity_penalty = RewTerm(
+            func=custom_mdp.joint_velocity_penalty,
+            weight=0.5,  # Reduced from 1.0
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_ids=[0, 1, 2, 3, 4, 5, 6])
+            },
+        )
+
+        action_smoothness = RewTerm(
+            func=custom_mdp.action_smoothness_penalty, weight=0.3  # Reduced from 1.0
+        )
 
     rewards: RewardsCfg = RewardsCfg()
 
@@ -213,20 +250,42 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
             func=mdp.time_out,
             time_out=True,
         )
+
         success = DoneTerm(func=custom_mdp.success_termination)
-        constraint_violation = DoneTerm(
-            func=custom_mdp.constraint_violation_termination
+
+        # Severe trajectory violation termination
+        severe_violation = DoneTerm(
+            func=custom_mdp.severe_trajectory_violation_termination
+        )
+
+        # Robot safety terminations
+        robot_joint_limits = DoneTerm(
+            func=mdp.joint_pos_out_of_limit,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_ids=[0, 1, 2, 3, 4, 5, 6])
+            },
         )
 
     terminations: TerminationsCfg = TerminationsCfg()
 
     def __post_init__(self):
         """Post initialization."""
-        # Constraint parameters
+        # Constraint parameters - aligned with reward functions
         self.max_trajectory_deviation = (
-            0.08  # 8cm max deviation # TODO: Tune this parameter
+            0.05  # Matches trajectory_tracking_reward delta_max
         )
-        self.target_tolerance = 0.05  # 5cm grasp tolerance # TODO: Tune this parameter
+        self.target_tolerance = 0.02  # Matches grasp_precision_reward epsilon
         self.severe_violation_threshold = (
-            0.15  # 15cm severe violation # TODO: Tune this parameter
+            0.08  # Matches trajectory_violation_penalty delta_max
         )
+
+        # Trajectory parameters
+        self.trajectory_update_rate = 0.1  # How often to update reference trajectory
+        self.workspace_bounds = {
+            "x_min": 0.2,
+            "x_max": 0.8,
+            "y_min": -0.3,
+            "y_max": 0.3,
+            "z_min": 0.55,
+            "z_max": 0.8,
+        }
