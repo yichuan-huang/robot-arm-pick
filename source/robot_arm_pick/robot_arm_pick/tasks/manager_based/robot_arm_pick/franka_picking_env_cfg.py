@@ -201,10 +201,10 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
 
         # Target approach reward - strong positive signal
         approach_target = RewTerm(
-            func=custom_mdp.target_approach_reward, weight=6.0
-        )  # Strong positive reward for approaching target
+            func=custom_mdp.target_approach_reward, weight=3.0
+        )  # Bounded [0,1], moderate weight
 
-        # Success bonus - highest priority
+        # Success bonus - moderate but clear signal (bounded ~[10, 15])
         success_bonus = RewTerm(
             func=custom_mdp.success_bonus_reward,
             weight=1.0,  # Weight is 1.0, bonus value is large in function
@@ -213,7 +213,7 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
         # Grasp precision reward - good weight
         grasp_precision = RewTerm(
             func=custom_mdp.grasp_precision_reward,
-            weight=3.0,  # Reasonable weight for precision
+            weight=2.0,  # Bounded [0,1]
         )
 
         # Time efficiency reward - small positive incentive
@@ -222,7 +222,7 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
             weight=1.0,  # Small positive incentive
         )
 
-        # Trajectory violation penalty - gentle constraint
+        # Trajectory violation penalty - gentle constraint (bounded [-1,0])
         trajectory_violation = RewTerm(
             func=custom_mdp.trajectory_violation_penalty,
             weight=0.3,  # Gentle penalty to maintain some constraint
@@ -231,7 +231,7 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
         # Control penalties - small but present
         joint_velocity_penalty = RewTerm(
             func=custom_mdp.joint_velocity_penalty,
-            weight=0.2,  # Small penalty for excessive movement
+            weight=0.1,  # Smaller since penalty is tanh-squashed
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_ids=[0, 1, 2, 3, 4, 5, 6])
             },
@@ -239,7 +239,7 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
 
         action_smoothness = RewTerm(
             func=custom_mdp.action_smoothness_penalty,
-            weight=0.2,  # Small smoothness penalty
+            weight=0.1,  # Smaller since penalty is tanh-squashed
         )
 
     rewards: RewardsCfg = RewardsCfg()
@@ -275,8 +275,23 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
         self.max_trajectory_deviation = (
             0.10  # Balanced tolerance - not too strict, not too lenient
         )
-        self.target_tolerance = 0.025  # Reasonable precision requirement
+
+        # Curriculum learning for target tolerance
+        self.target_tolerance_initial = 0.07  # Start easier for early training
+        self.target_tolerance_final = 0.025  # Target precision after curriculum
+        self.target_tolerance_decay_steps = 500000  # Steps to reach final tolerance
+        self.target_tolerance = (
+            self.target_tolerance_initial
+        )  # Current value (will be updated)
+
         self.severe_violation_threshold = 0.15  # Reasonable severe violation threshold
+
+        # Success bonus configuration for reward function (bounded and consistent)
+        self.success_base_bonus = 20.0  # Increased from 10.0 for stronger signal
+        self.success_time_bonus = 10.0  # Increased from 5.0 for time efficiency
+
+        # Reward debug: enabled for training monitoring
+        self.reward_debug_print_interval = 200  # Print every 200 steps
 
         # Trajectory parameters
         self.trajectory_update_rate = 0.1  # How often to update reference trajectory

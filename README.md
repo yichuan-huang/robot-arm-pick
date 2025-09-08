@@ -11,6 +11,8 @@ This project implements a constrained robotic picking task where a Franka Panda 
 - **📐 Constrained Trajectories**: Robot must follow predefined safe trajectories
 - **🎯 Object Picking**: Pick and place tasks with various objects
 - **🏆 Reward Engineering**: Multi-objective rewards for trajectory compliance and task success
+- **📚 Curriculum Learning**: Adaptive difficulty with progressive tolerance tightening
+- **🔍 Debug & Monitoring**: Real-time reward analysis and success rate tracking
 - **⚡ High Performance**: Vectorized simulation with Isaac Lab
 
 ## 📁 Project Structure
@@ -63,17 +65,29 @@ robot_arm_pick/
 - Actions normalized to [-1, 1] range
 
 ### 🎯 Reward Structure
-| Component               | Weight      | Description                         |
-| ----------------------- | ----------- | ----------------------------------- |
-| **Survival**            | -0.01/step  | Encourages task completion          |
-| **Trajectory Tracking** | Exponential | Rewards staying near reference path |
-| **Target Approach**     | Exponential | Rewards approaching target object   |
-| **Success Bonus**       | +100.0      | Large reward for successful grasp   |
+| Component                | Weight | Range     | Description                           |
+| ------------------------ | ------ | --------- | ------------------------------------- |
+| **Trajectory Tracking**  | 2.0    | [-0.5, 1] | Exponential reward for path following |
+| **Target Approach**      | 3.0    | [0, 1]    | Distance-based approach reward        |
+| **Success Bonus**        | 1.0    | [20, 30]  | Large bonus for successful grasp      |
+| **Grasp Precision**      | 2.0    | [0, 1]    | Precision positioning reward          |
+| **Time Efficiency**      | 1.0    | [0, 0.2]  | Early completion incentive            |
+| **Trajectory Violation** | 0.3    | [-1, 0]   | Penalty for constraint violations     |
+| **Joint Velocity**       | 0.1    | [-1, 0]   | Smoothness penalty                    |
+| **Action Smoothness**    | 0.1    | [-1, 0]   | Control smoothness penalty            |
+
+### 📚 Curriculum Learning
+The environment implements adaptive difficulty progression:
+- **Initial tolerance**: 0.07m (easier for early training)
+- **Final tolerance**: 0.025m (final precision requirement)  
+- **Decay period**: 500,000 steps (configurable)
+- **Adaptive scaling**: Linear progression from easy to hard
 
 ### 🏁 Termination Conditions
-- ✅ **Success**: End-effector within 5cm of target
-- ❌ **Constraint Violation**: Trajectory deviation > 15cm
-- ⏰ **Timeout**: Episode exceeds maximum duration
+- ✅ **Success**: End-effector within curriculum tolerance of target + gripper closed
+- ❌ **Severe Violation**: Trajectory deviation > 15cm
+- ⚠️ **Joint Limits**: Robot joint positions exceed safety limits
+- ⏰ **Timeout**: Episode exceeds maximum duration (12 seconds)
 
 ## 🚀 Quick Start
 
@@ -104,32 +118,36 @@ robot_arm_pick/
 Train a PPO agent using Stable-Baselines3:
 
 ```bash
-# Basic training with default hyperparameters
-python scripts/sb3/train.py --task Isaac-Franka-Picking-v0 --num_envs 64 --headless
+# Basic training with reward debugging enabled
+python scripts/sb3/train.py --task Isaac-Franka-Picking-v0 --num_envs 64 --rew_debug_interval 200 --headless
 
-# Large-scale training with more environments for faster convergence
+# Training with custom curriculum learning parameters
 python scripts/sb3/train.py \
     --task Isaac-Franka-Picking-v0 \
     --num_envs 128 \
-    --max_iterations 4000 \
-    --seed 42 \
+    --curriculum_initial_tolerance 0.08 \
+    --curriculum_final_tolerance 0.02 \
+    --curriculum_decay_steps 750000 \
+    --rew_debug_interval 500 \
     --headless
 
-# Extended training with video recording (10M timesteps)
+# Enhanced success bonus for faster learning
 python scripts/sb3/train.py \
     --task Isaac-Franka-Picking-v0 \
     --num_envs 64 \
-    --max_iterations 10000 \
-    --video \
-    --video_interval 250000 \
+    --success_base_bonus 25.0 \
+    --success_time_bonus 15.0 \
+    --rew_debug_interval 200 \
+    --max_iterations 4000 \
     --headless
 
-# High-performance training setup (recommended for research)
+# Large-scale training with monitoring
 python scripts/sb3/train.py \
     --task Isaac-Franka-Picking-v0 \
     --num_envs 256 \
     --max_iterations 5000 \
-    --log_interval 25000 \
+    --rew_debug_interval 1000 \
+    --curriculum_decay_steps 1000000 \
     --video \
     --video_interval 500000 \
     --headless
@@ -151,6 +169,16 @@ python scripts/sb3/train.py \
 - `--video_interval`: Steps between video recordings (recommended: 250K-500K for long training)
 - `--log_interval`: Logging frequency (default: 50K, recommended: 25K for detailed monitoring)
 - `--headless`: Run without GUI (essential for large-scale training)
+
+**🔍 Debugging & Monitoring Options:**
+- `--rew_debug_interval N`: Print reward term means every N steps (recommended: 200-1000)
+- `--success_base_bonus X`: Override base success bonus (default: 20.0)
+- `--success_time_bonus Y`: Override time-based success bonus (default: 10.0)
+
+**📚 Curriculum Learning Options:**
+- `--curriculum_initial_tolerance Z`: Initial target tolerance in meters (default: 0.07)
+- `--curriculum_final_tolerance W`: Final target tolerance in meters (default: 0.025)
+- `--curriculum_decay_steps S`: Steps to transition from initial to final (default: 500000)
 
 ### 🎮 Testing & Evaluation
 
@@ -195,14 +223,17 @@ python scripts/zero_agent.py --task Isaac-Franka-Picking-v0 --num_envs 1
 
 The environment behavior can be customized through configuration files:
 
-| Parameter                    | Default | Large-Scale | Description                      |
-| ---------------------------- | ------- | ----------- | -------------------------------- |
-| `max_trajectory_deviation`   | 8cm     | 8cm         | Maximum allowed path deviation   |
-| `target_tolerance`           | 5cm     | 5cm         | Success distance threshold       |
-| `severe_violation_threshold` | 15cm    | 15cm        | Termination distance threshold   |
-| `episode_length_s`           | 12.0s   | 12.0s       | Maximum episode duration         |
-| `num_envs`                   | 64      | 128-256     | Parallel simulation environments |
-| `total_timesteps`            | Config  | 5M-10M      | Total training timesteps         |
+| Parameter                      | Default | Description                           |
+| ------------------------------ | ------- | ------------------------------------- |
+| `max_trajectory_deviation`     | 0.10m   | Maximum allowed path deviation        |
+| `target_tolerance_initial`     | 0.07m   | Initial success distance (curriculum) |
+| `target_tolerance_final`       | 0.025m  | Final success distance (curriculum)   |
+| `target_tolerance_decay_steps` | 500K    | Steps for curriculum progression      |
+| `severe_violation_threshold`   | 0.15m   | Termination distance threshold        |
+| `success_base_bonus`           | 20.0    | Base reward for successful grasp      |
+| `success_time_bonus`           | 10.0    | Extra reward for fast completion      |
+| `reward_debug_print_interval`  | 200     | Steps between reward debug prints     |
+| `episode_length_s`             | 12.0s   | Maximum episode duration              |
 
 ### Hyperparameter Tuning
 
@@ -218,17 +249,46 @@ For Franka picking tasks, the training script automatically applies optimized hy
 | `gamma`         | 0.99    | 0.995            | Higher discount factor           |
 | `gae_lambda`    | 0.95    | 0.98             | Better value estimation          |
 
+### 🔧 Reward Engineering Guidelines
+
+When tuning rewards, follow these principles:
+- **Bounded rewards**: All terms are normalized to consistent ranges for stable training
+- **Balanced weights**: Current weights are tuned for the bounded reward ranges
+- **Success emphasis**: Large success bonus (20-30) creates clear learning signal
+- **Curriculum integration**: Precision rewards automatically adapt to current tolerance
+
 ## 📊 Results & Logging
 
 Training progress is automatically logged including:
 - 📈 **Episode Rewards**: Cumulative reward per episode
-- 🎯 **Success Rate**: Percentage of successful grasps
-- ⚠️ **Constraint Violations**: Safety violation frequency  
+- 🎯 **Success Rate**: Percentage of successful grasps  
+- ⚠️ **Constraint Violations**: Safety violation frequency
 - 📐 **Trajectory Tracking**: Path following accuracy
+- 🔍 **Per-term Rewards**: Individual reward component analysis
+- 📚 **Curriculum Progress**: Target tolerance evolution over time
 - 🕒 **Training Metrics**: Timesteps/second, memory usage, GPU utilization
 - 💾 **Model Checkpoints**: Saved every 64K steps for large-scale training
 
 **Log Directory:** `logs/sb3/Isaac-Franka-Picking-v0/[TIMESTAMP]/`
+
+### 🔍 Debugging Output
+
+When `--rew_debug_interval` is enabled, you'll see detailed reward analysis:
+
+```bash
+[reward-debug][step=200] track_trajectory: mean=0.7234
+[reward-debug][step=200] approach_target: mean=0.4567
+[reward-debug][step=200] success_bonus: mean=0.0234
+[reward-debug][step=200] grasp_precision: mean=0.3456
+[Curriculum] Step 10000: target_tolerance = 0.0686
+[Success Rate] Episodes: 1000, Success Rate: 0.0234, Target Tolerance: 0.0680
+[Reward Debug] Step 15000: 3/64 envs succeeded this step
+```
+
+This helps identify:
+- **Reward balance**: Which terms dominate training
+- **Success progression**: How success rate improves over time  
+- **Curriculum effectiveness**: Whether difficulty progression is appropriate
 
 ### Training Performance Monitoring
 
@@ -242,14 +302,20 @@ tensorboard --logdir logs/sb3/Isaac-Franka-Picking-v0/2025-MM-DD_HH-MM-SS/
 ```
 
 ### Expected Training Timeline
-| Timesteps  | Training Time* | Expected Performance               |
-| ---------- | -------------- | ---------------------------------- |
-| 1M steps   | 30-60 min      | Basic learning, ~10% success       |
-| 2.5M steps | 1-2 hours      | Moderate performance, ~40% success |
-| 5M steps   | 2-4 hours      | Good performance, ~70% success     |
-| 10M steps  | 4-8 hours      | Research-grade, 85%+ success       |
+| Timesteps  | Training Time* | Expected Performance              | Curriculum Status         |
+| ---------- | -------------- | --------------------------------- | ------------------------- |
+| 100K steps | 5-15 min       | Initial learning, ~5% success     | Easy tolerance (0.07m)    |
+| 500K steps | 25-45 min      | Curriculum midpoint, ~25% success | Mid tolerance (0.05m)     |
+| 1M steps   | 45-90 min      | Good learning, ~45% success       | Tighter tolerance (0.04m) |
+| 2.5M steps | 2-4 hours      | Strong performance, ~70% success  | Final tolerance (0.025m)  |
+| 5M steps   | 4-8 hours      | Research-grade, 85%+ success      | Expert precision          |
 
 *Training times based on RTX 4080+ with 64-128 environments
+
+The curriculum learning system automatically adjusts difficulty, typically showing:
+- **Phase 1 (0-200K)**: High success rate with easy tolerance, agent learns basics
+- **Phase 2 (200K-600K)**: Success rate may dip as tolerance tightens, agent adapts  
+- **Phase 3 (600K+)**: Success rate recovers and improves with final precision
 
 ### Visualization
 

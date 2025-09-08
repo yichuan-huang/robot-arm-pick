@@ -7,19 +7,19 @@ policy: 'MlpPolicy'
 
 # Rollout settings
 n_steps: 2048
-batch_size: 64
+batch_size: 256
 gae_lambda: 0.95
 gamma: 0.99
 
-# Training optimization - balanced for good learning
+# Training optimization
 n_epochs: 10
-ent_coef: 0.005  # Small exploration bonus
-learning_rate: !!float 4e-4  # Moderate learning rate increase
+ent_coef: 0.005
+learning_rate: !!float 4e-4
 clip_range: !!float 0.2
 
-# Neural network architecture - moderately larger
+# Neural network architecture
 policy_kwargs:
-  net_arch: [384, 384, 192]  # Moderately larger network
+  net_arch: [384, 384, 192]
   squash_output: false
 
 # Value function coefficient
@@ -31,7 +31,6 @@ max_grad_norm: 0.5
 # Device
 device: "cuda:0"
 
-# Additional advanced settings for manipulation tasks
-# normalize_input: true  # Uncomment if input normalization is needed
-# normalize_value: false
-# clip_obs: 10.0
+# Advanced settings for manipulation
+normalize_input: true
+clip_obs: 10.0

@@ -66,6 +66,42 @@ parser.add_argument(
     help="Export IO descriptors.",
 )
 parser.add_argument(
+    "--rew_debug_interval",
+    type=int,
+    default=0,
+    help="If >0, print mean of each reward term every N steps.",
+)
+parser.add_argument(
+    "--success_base_bonus",
+    type=float,
+    default=None,
+    help="Override base success bonus in env cfg.",
+)
+parser.add_argument(
+    "--success_time_bonus",
+    type=float,
+    default=None,
+    help="Override extra time-based success bonus in env cfg.",
+)
+parser.add_argument(
+    "--curriculum_initial_tolerance",
+    type=float,
+    default=None,
+    help="Override initial target tolerance for curriculum learning.",
+)
+parser.add_argument(
+    "--curriculum_final_tolerance",
+    type=float,
+    default=None,
+    help="Override final target tolerance for curriculum learning.",
+)
+parser.add_argument(
+    "--curriculum_decay_steps",
+    type=int,
+    default=None,
+    help="Override decay steps for curriculum learning.",
+)
+parser.add_argument(
     "--keep_all_info",
     action="store_true",
     default=False,
@@ -148,6 +184,31 @@ def main(
     env_cfg.sim.device = (
         args_cli.device if args_cli.device is not None else env_cfg.sim.device
     )
+    # Apply optional reward debug/bonus overrides
+    if hasattr(env_cfg, "reward_debug_print_interval"):
+        env_cfg.reward_debug_print_interval = args_cli.rew_debug_interval
+    if args_cli.success_base_bonus is not None and hasattr(
+        env_cfg, "success_base_bonus"
+    ):
+        env_cfg.success_base_bonus = args_cli.success_base_bonus
+    if args_cli.success_time_bonus is not None and hasattr(
+        env_cfg, "success_time_bonus"
+    ):
+        env_cfg.success_time_bonus = args_cli.success_time_bonus
+
+    # Apply curriculum learning overrides
+    if args_cli.curriculum_initial_tolerance is not None and hasattr(
+        env_cfg, "target_tolerance_initial"
+    ):
+        env_cfg.target_tolerance_initial = args_cli.curriculum_initial_tolerance
+    if args_cli.curriculum_final_tolerance is not None and hasattr(
+        env_cfg, "target_tolerance_final"
+    ):
+        env_cfg.target_tolerance_final = args_cli.curriculum_final_tolerance
+    if args_cli.curriculum_decay_steps is not None and hasattr(
+        env_cfg, "target_tolerance_decay_steps"
+    ):
+        env_cfg.target_tolerance_decay_steps = args_cli.curriculum_decay_steps
 
     run_info = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_root_path = os.path.abspath(os.path.join("logs", "sb3", args_cli.task))

@@ -164,10 +164,23 @@ class FrankaPickingEnv(ManagerBasedRLEnv):
 
         # Initialize constraint parameters
         self.max_deviation = getattr(cfg, "max_trajectory_deviation", 0.08)
-        self.target_tolerance = getattr(cfg, "target_tolerance", 0.05)
         self.severe_violation_threshold = getattr(
             cfg, "severe_violation_threshold", 0.15
         )
+
+        # Curriculum learning for target tolerance
+        self.target_tolerance_initial = getattr(cfg, "target_tolerance_initial", 0.07)
+        self.target_tolerance_final = getattr(cfg, "target_tolerance_final", 0.025)
+        self.target_tolerance_decay_steps = getattr(
+            cfg, "target_tolerance_decay_steps", 500000
+        )
+        self.target_tolerance = self.target_tolerance_initial
+
+        # Success tracking for monitoring
+        self.total_steps = 0
+        self.success_count = 0
+        self.episode_count = 0
+        self.last_success_rate_print = 0
 
         super().__init__(cfg, render_mode, **kwargs)
 
@@ -186,8 +199,44 @@ class FrankaPickingEnv(ManagerBasedRLEnv):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
 
+        # Update curriculum learning
+        self._update_curriculum()
+
+        # Track episode resets
+        self.episode_count += len(env_ids)
+
         # Generate new random trajectories
         self._generate_random_trajectories(env_ids)
+
+    def _update_curriculum(self):
+        """Update target tolerance based on curriculum learning schedule."""
+        self.total_steps += 1
+
+        # Linear decay from initial to final tolerance
+        progress = min(self.total_steps / self.target_tolerance_decay_steps, 1.0)
+        self.target_tolerance = (
+            self.target_tolerance_initial * (1 - progress)
+            + self.target_tolerance_final * progress
+        )
+
+        # Print curriculum updates occasionally
+        if self.total_steps % 10000 == 0:
+            print(
+                f"[Curriculum] Step {self.total_steps}: target_tolerance = {self.target_tolerance:.4f}"
+            )
+
+    def _track_success_rate(self, success_mask: torch.Tensor):
+        """Track and optionally print success rate statistics."""
+        self.success_count += success_mask.sum().item()
+
+        # Print success rate every 1000 episodes
+        if self.episode_count - self.last_success_rate_print >= 1000:
+            if self.episode_count > 0:
+                success_rate = self.success_count / self.episode_count
+                print(
+                    f"[Success Rate] Episodes: {self.episode_count}, Success Rate: {success_rate:.4f}, Target Tolerance: {self.target_tolerance:.4f}"
+                )
+            self.last_success_rate_print = self.episode_count
 
     def _generate_random_trajectories(self, env_ids: torch.Tensor):
         """Generate random start and target positions with trajectory."""
@@ -306,13 +355,13 @@ class FrankaPickingEnv(ManagerBasedRLEnv):
         return reward
 
     def check_success(self) -> torch.Tensor:
-        """Check if grasping is successful with improved criteria."""
+        """Check if grasping is successful with improved criteria and curriculum learning."""
         ee_pos = self.scene["robot"].data.body_pos_w[:, -1, :3]
         obj_pos = self.scene["object"].data.root_pos_w[:, :3]
         distance = torch.norm(ee_pos - obj_pos, dim=1)
 
         # Multi-criteria success check
-        # 1. End-effector close to object
+        # 1. End-effector close to object (using curriculum tolerance)
         distance_success = distance < self.target_tolerance
 
         # 2. Gripper closed (gripper joints < threshold indicating closed)
@@ -331,6 +380,9 @@ class FrankaPickingEnv(ManagerBasedRLEnv):
         # Success requires proximity AND gripper closed
         # Object lifting is bonus but not required for now to ease learning
         success = distance_success & gripper_closed
+
+        # Track success rate for monitoring
+        self._track_success_rate(success)
 
         return success
 
