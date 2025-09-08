@@ -17,3 +17,10 @@ def success_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
 def constraint_violation_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Check if constraint violation threshold is exceeded."""
     return env.check_constraint_violation()
+
+
+def severe_trajectory_violation_termination(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Check if severe trajectory violation threshold is exceeded."""
+    deviation = env.get_trajectory_deviation().squeeze(1)
+    severe_threshold = getattr(env.cfg, "severe_violation_threshold", 0.08)
+    return deviation > severe_threshold
