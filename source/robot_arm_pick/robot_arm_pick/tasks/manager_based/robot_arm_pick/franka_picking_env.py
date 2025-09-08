@@ -10,53 +10,143 @@ from isaaclab.envs import ManagerBasedRLEnv
 
 
 class TrajectoryGenerator:
-    """Simple trajectory generator for Franka picking."""
+    """Improved trajectory generator for Franka picking with multiple trajectory types."""
 
-    def __init__(self, trajectory_type: str = "parabolic"):
+    def __init__(self, trajectory_type: str = "adaptive"):
         """Initialize trajectory generator."""
         self.trajectory_type = trajectory_type
 
     def generate_trajectory(
         self, start_pos: torch.Tensor, end_pos: torch.Tensor, duration: float
     ) -> dict:
-        """Generate parabolic trajectory."""
-        # Create intermediate waypoint above the midpoint
+        """Generate diverse trajectories based on distance and task requirements."""
+        batch_size = start_pos.shape[0]
+        device = start_pos.device
+
+        # Calculate distance to determine trajectory type
+        distance = torch.norm(end_pos - start_pos, dim=1)
+
+        # Create intermediate waypoints with adaptive height
         mid_pos = (start_pos + end_pos) / 2
-        mid_pos[:, 2] += 0.12  # Lift 12cm above midpoint (适应新的桌面高度)
+
+        # Adaptive lift height based on horizontal distance
+        base_lift = 0.08  # Minimum lift height
+        distance_factor = torch.clamp(
+            distance * 0.15, 0.05, 0.25
+        )  # Scale with distance
+        mid_pos[:, 2] += base_lift + distance_factor
+
+        # Add slight randomization to intermediate points for diversity
+        noise_scale = 0.03
+        xy_noise = (torch.rand(batch_size, 2, device=device) - 0.5) * noise_scale
+        mid_pos[:, :2] += xy_noise
+
+        # Optional: Create multi-waypoint trajectories for complex paths
+        # For longer distances, add an additional waypoint
+        use_complex = distance > 0.4
+        if use_complex.any():
+            # Create quarter-way and three-quarter-way points for complex trajectories
+            quarter_pos = start_pos * 0.75 + end_pos * 0.25
+            quarter_pos[use_complex, 2] += 0.06  # Slight lift
+
+            three_quarter_pos = start_pos * 0.25 + end_pos * 0.75
+            three_quarter_pos[use_complex, 2] += 0.04  # Lower lift approaching target
 
         return {
             "start_pos": start_pos,
             "mid_pos": mid_pos,
             "end_pos": end_pos,
             "duration": duration,
+            "distance": distance,
+            "use_complex": (
+                use_complex
+                if "use_complex" in locals()
+                else torch.zeros_like(distance, dtype=torch.bool)
+            ),
+            "quarter_pos": quarter_pos if "quarter_pos" in locals() else mid_pos,
+            "three_quarter_pos": (
+                three_quarter_pos if "three_quarter_pos" in locals() else mid_pos
+            ),
         }
 
     def get_reference_pose(
         self, trajectory: dict, time_step: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Get reference position and velocity using quadratic Bezier curve."""
+        """Get reference position and velocity using smooth spline interpolation."""
         # Normalize time to [0, 1]
         t_norm = torch.clamp(time_step / trajectory["duration"], 0, 1).unsqueeze(1)
 
         start_pos = trajectory["start_pos"]
         mid_pos = trajectory["mid_pos"]
         end_pos = trajectory["end_pos"]
-
-        # Quadratic Bezier curve: B(t) = (1-t)²P₀ + 2(1-t)tP₁ + t²P₂
-        t_norm_sq = t_norm**2
-        one_minus_t = 1 - t_norm
-        one_minus_t_sq = one_minus_t**2
-
-        position = (
-            one_minus_t_sq * start_pos
-            + 2 * one_minus_t * t_norm * mid_pos
-            + t_norm_sq * end_pos
+        use_complex = trajectory.get(
+            "use_complex", torch.zeros_like(t_norm.squeeze(1), dtype=torch.bool)
         )
 
-        # Derivative for velocity: B'(t) = 2(1-t)(P₁-P₀) + 2t(P₂-P₁)
-        velocity = (
-            2 * one_minus_t * (mid_pos - start_pos) + 2 * t_norm * (end_pos - mid_pos)
-        ) / trajectory["duration"]
+        # For simple trajectories: quadratic Bezier curve
+        simple_mask = ~use_complex
+
+        # For complex trajectories: cubic Bezier curve with 4 control points
+        if use_complex.any():
+            quarter_pos = trajectory.get("quarter_pos", mid_pos)
+            three_quarter_pos = trajectory.get("three_quarter_pos", mid_pos)
+
+            # Cubic Bezier: B(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃
+            t_norm_complex = t_norm[use_complex]
+            t_norm_sq = t_norm_complex**2
+            t_norm_cu = t_norm_complex**3
+            one_minus_t = 1 - t_norm_complex
+            one_minus_t_sq = one_minus_t**2
+            one_minus_t_cu = one_minus_t**3
+
+            position_complex = (
+                one_minus_t_cu * start_pos[use_complex]
+                + 3 * one_minus_t_sq * t_norm_complex * quarter_pos[use_complex]
+                + 3 * one_minus_t * t_norm_sq * three_quarter_pos[use_complex]
+                + t_norm_cu * end_pos[use_complex]
+            )
+
+            # Velocity for cubic Bezier (derivative)
+            velocity_complex = (
+                3 * one_minus_t_sq * (quarter_pos[use_complex] - start_pos[use_complex])
+                + 6
+                * one_minus_t
+                * t_norm_complex
+                * (three_quarter_pos[use_complex] - quarter_pos[use_complex])
+                + 3
+                * t_norm_sq
+                * (end_pos[use_complex] - three_quarter_pos[use_complex])
+            ) / trajectory["duration"]
+
+        # Quadratic Bezier for simple trajectories
+        t_norm_simple = t_norm[simple_mask] if simple_mask.any() else t_norm[:0]
+        if simple_mask.any():
+            t_norm_sq_simple = t_norm_simple**2
+            one_minus_t_simple = 1 - t_norm_simple
+            one_minus_t_sq_simple = one_minus_t_simple**2
+
+            position_simple = (
+                one_minus_t_sq_simple * start_pos[simple_mask]
+                + 2 * one_minus_t_simple * t_norm_simple * mid_pos[simple_mask]
+                + t_norm_sq_simple * end_pos[simple_mask]
+            )
+
+            velocity_simple = (
+                2 * one_minus_t_simple * (mid_pos[simple_mask] - start_pos[simple_mask])
+                + 2 * t_norm_simple * (end_pos[simple_mask] - mid_pos[simple_mask])
+            ) / trajectory["duration"]
+
+        # Combine results
+        position = torch.zeros_like(start_pos)
+        velocity = torch.zeros_like(start_pos)
+
+        if simple_mask.any():
+            position[simple_mask] = position_simple
+            velocity[simple_mask] = velocity_simple
+
+        if use_complex.any():
+            position[use_complex] = position_complex
+            velocity[use_complex] = velocity_complex
 
         return position, velocity
 
@@ -216,11 +306,33 @@ class FrankaPickingEnv(ManagerBasedRLEnv):
         return reward
 
     def check_success(self) -> torch.Tensor:
-        """Check if grasping is successful."""
+        """Check if grasping is successful with improved criteria."""
         ee_pos = self.scene["robot"].data.body_pos_w[:, -1, :3]
         obj_pos = self.scene["object"].data.root_pos_w[:, :3]
         distance = torch.norm(ee_pos - obj_pos, dim=1)
-        return distance < self.target_tolerance
+
+        # Multi-criteria success check
+        # 1. End-effector close to object
+        distance_success = distance < self.target_tolerance
+
+        # 2. Gripper closed (gripper joints < threshold indicating closed)
+        gripper_pos = self.scene["robot"].data.joint_pos[
+            :, 7:9
+        ]  # Last 2 joints are gripper
+        gripper_closed = torch.all(
+            gripper_pos < 0.01, dim=1
+        )  # Both gripper joints closed
+
+        # 3. Object lifted slightly (optional - for true picking)
+        obj_height = obj_pos[:, 2]
+        table_height = 0.575  # Known table surface height
+        object_lifted = obj_height > (table_height + 0.02)  # Lifted 2cm above table
+
+        # Success requires proximity AND gripper closed
+        # Object lifting is bonus but not required for now to ease learning
+        success = distance_success & gripper_closed
+
+        return success
 
     def check_constraint_violation(self) -> torch.Tensor:
         """Check for severe constraint violations."""
