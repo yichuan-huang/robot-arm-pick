@@ -190,19 +190,19 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
 
     action_space = 9
 
-    # Updated Rewards - aligned with new reward functions and better balanced weights
+    # Balanced Rewards - easier to obtain positive rewards but still challenging
     @configclass
     class RewardsCfg:
-        # Primary trajectory tracking reward - reduced weight for less conservative behavior
+        # Primary trajectory tracking reward - moderate weight
         track_trajectory = RewTerm(
             func=custom_mdp.trajectory_tracking_reward,
-            weight=3.0,  # Reduced from 10.0 to allow more exploration
+            weight=2.0,  # Moderate weight for guidance without dominating
         )
 
-        # Target approach reward - increased weight to emphasize goal reaching
+        # Target approach reward - strong positive signal
         approach_target = RewTerm(
-            func=custom_mdp.target_approach_reward, weight=8.0
-        )  # Increased from 3.0
+            func=custom_mdp.target_approach_reward, weight=6.0
+        )  # Strong positive reward for approaching target
 
         # Success bonus - highest priority
         success_bonus = RewTerm(
@@ -210,35 +210,36 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
             weight=1.0,  # Weight is 1.0, bonus value is large in function
         )
 
-        # Grasp precision reward - moderate weight
+        # Grasp precision reward - good weight
         grasp_precision = RewTerm(
             func=custom_mdp.grasp_precision_reward,
-            weight=4.0,  # Reduced from 8.0 to balance with approach reward
+            weight=3.0,  # Reasonable weight for precision
         )
 
-        # Time efficiency reward - moderate weight
+        # Time efficiency reward - small positive incentive
         time_efficiency = RewTerm(
             func=custom_mdp.time_efficiency_reward,
-            weight=2.0,  # Reduced from 5.0 to prioritize task completion over speed
+            weight=1.0,  # Small positive incentive
         )
 
-        # Trajectory violation penalty - reduced to allow some exploration
+        # Trajectory violation penalty - gentle constraint
         trajectory_violation = RewTerm(
             func=custom_mdp.trajectory_violation_penalty,
-            weight=0.5,  # Reduced from 1.0 to be less punitive
+            weight=0.3,  # Gentle penalty to maintain some constraint
         )
 
-        # Control penalties - reduced for smoother learning
+        # Control penalties - small but present
         joint_velocity_penalty = RewTerm(
             func=custom_mdp.joint_velocity_penalty,
-            weight=0.5,  # Reduced from 1.0
+            weight=0.2,  # Small penalty for excessive movement
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_ids=[0, 1, 2, 3, 4, 5, 6])
             },
         )
 
         action_smoothness = RewTerm(
-            func=custom_mdp.action_smoothness_penalty, weight=0.3  # Reduced from 1.0
+            func=custom_mdp.action_smoothness_penalty,
+            weight=0.2,  # Small smoothness penalty
         )
 
     rewards: RewardsCfg = RewardsCfg()
@@ -270,14 +271,12 @@ class FrankaPickingEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         """Post initialization."""
-        # Constraint parameters - aligned with reward functions
+        # Constraint parameters - balanced for reasonable challenge
         self.max_trajectory_deviation = (
-            0.05  # Matches trajectory_tracking_reward delta_max
+            0.10  # Balanced tolerance - not too strict, not too lenient
         )
-        self.target_tolerance = 0.02  # Matches grasp_precision_reward epsilon
-        self.severe_violation_threshold = (
-            0.08  # Matches trajectory_violation_penalty delta_max
-        )
+        self.target_tolerance = 0.025  # Reasonable precision requirement
+        self.severe_violation_threshold = 0.15  # Reasonable severe violation threshold
 
         # Trajectory parameters
         self.trajectory_update_rate = 0.1  # How often to update reference trajectory

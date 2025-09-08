@@ -13,18 +13,18 @@ if TYPE_CHECKING:
 
 
 def trajectory_tracking_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Reward for staying close to reference trajectory."""
+    """Reward for staying close to reference trajectory - balanced difficulty."""
     deviation = env.get_trajectory_deviation().squeeze(1)
-    # More progressive reward system
-    delta_max = 0.08  # Slightly more tolerant maximum deviation
+    # Balanced tolerance - not too strict, not too lenient
+    delta_max = 0.10  # Reasonable tolerance for learning
 
-    # Exponential reward that's less punitive for small deviations
-    reward = torch.exp(-deviation / 0.04)  # Smoother exponential decay
+    # Balanced exponential reward
+    reward = torch.exp(-deviation / 0.06)  # Moderate tolerance
 
-    # Small penalty for large deviations instead of harsh cutoff
+    # Moderate penalty for large deviations
     large_deviation_penalty = torch.where(
         deviation > delta_max,
-        -2.0 * (deviation - delta_max),  # Moderate penalty for violations
+        -1.5 * (deviation - delta_max),  # Moderate penalty
         torch.zeros_like(deviation),
     )
 
@@ -153,13 +153,14 @@ def action_smoothness_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 
 def trajectory_violation_penalty(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Hard constraint penalty for trajectory violations."""
+    """Balanced constraint penalty for trajectory violations."""
     deviation = env.get_trajectory_deviation().squeeze(1)
-    delta_max = 0.08  # Slightly larger than tracking reward threshold
+    delta_max = 0.12  # Balanced tolerance - stricter than tracking but still reasonable
 
+    # Balanced violation penalty
     violation_penalty = torch.where(
         deviation > delta_max,
-        -50.0 * (deviation - delta_max),  # Severe penalty for violations
+        -10.0 * (deviation - delta_max),  # Meaningful but not crushing penalty
         torch.zeros_like(deviation),
     )
     return violation_penalty

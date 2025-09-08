@@ -11,15 +11,15 @@ batch_size: 64
 gae_lambda: 0.95
 gamma: 0.99
 
-# Training optimization
+# Training optimization - balanced for good learning
 n_epochs: 10
-ent_coef: 0.0
-learning_rate: !!float 3e-4
+ent_coef: 0.005  # Small exploration bonus
+learning_rate: !!float 4e-4  # Moderate learning rate increase
 clip_range: !!float 0.2
 
-# Neural network architecture
+# Neural network architecture - moderately larger
 policy_kwargs:
-  net_arch: [256, 256, 128]
+  net_arch: [384, 384, 192]  # Moderately larger network
   squash_output: false
 
 # Value function coefficient
