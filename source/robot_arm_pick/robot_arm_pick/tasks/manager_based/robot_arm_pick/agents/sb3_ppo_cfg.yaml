@@ -1,0 +1,37 @@
+# Enhanced PPO configuration for stronger reward signals and anti-plateau training
+seed: 42
+
+# Training timesteps
+n_timesteps: !!float 2e6
+policy: 'MlpPolicy'
+
+# Rollout settings - optimized for handling higher magnitude rewards
+n_steps: 1024  # Reduced for more frequent updates with stronger rewards
+batch_size: 256  # Balanced for stable learning with new reward scales
+gae_lambda: 0.98  # Higher for better value estimation with multi-scale rewards
+gamma: 0.99  # Higher discount for longer-term reward accumulation
+
+# Training optimization - tuned for stronger reward signals
+n_epochs: 6  # Reduced for faster iterations and prevent overfitting
+ent_coef: 0.01  # Increased exploration to handle reward landscapes
+learning_rate: !!float 2e-4  # Slightly reduced for stability with stronger rewards
+clip_range: !!float 0.15  # Tighter clipping for more conservative updates
+
+# Neural network architecture - optimized for complex reward signals
+policy_kwargs:
+  net_arch: [384, 256, 128]  # Slightly larger to handle complex reward signals
+  squash_output: false
+
+# Value function coefficient - increased for better value estimation
+vf_coef: 0.8  # Higher value function weight for better critic learning
+
+# Gradient clipping - adaptive for stronger reward signals
+max_grad_norm: 0.8  # Slightly more aggressive to handle reward spikes
+
+# Device
+device: "cuda:0"
+
+# Advanced settings for manipulation with enhanced rewards
+normalize_input: true
+normalize_value: true  # Added value normalization for reward scaling
+clip_obs: 15.0  # Increased observation clipping range
